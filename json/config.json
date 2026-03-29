@@ -2,7 +2,7 @@
   "groqKey": "gsk_...",
   "groqModel": "llama-3.3-70b-versatile",
   "timezone": "Asia/Manila",
-  "developer": "YourName",
+  "developer": "selov",
   "prefix": "/",
   "subprefix": ["#", "-", "+"],
   "devID": ["YOUR_TELEGRAM_USER_ID"],
