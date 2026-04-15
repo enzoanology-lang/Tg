@@ -9,12 +9,12 @@ const __dirname = path.dirname(__filename);
 export const meta = {
   name: 'katorsex',
   aliases: ['randvideo'],
-  version: '4.4.0',
+  version: '4.5.0',
   author: 'selov',
-  description: 'Get a random video (video only, no caption)',
+  description: 'Get a random video (video only)',
   guide: ['/katorsex'],
   cooldown: 5,
-  type: 'premium',
+  type: 'anyone',
   category: 'video'
 };
 
@@ -28,13 +28,12 @@ export async function onStart({ response, bot, chatId, messageID }) {
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
-    // The API may return data in various formats; try common keys
+    // Try multiple possible response keys
     const videos = data.results || data.result || data.data || [];
     if (!videos.length) {
       return response.edit(waitingMsg, '❌ No videos found.');
     }
 
-    // Pick a random video
     const video = videos[Math.floor(Math.random() * videos.length)];
     const videoUrl = video.videoUrl || video.url || video.src;
 
@@ -61,12 +60,13 @@ export async function onStart({ response, bot, chatId, messageID }) {
     const stats = await fs.stat(videoPath);
     if (stats.size === 0) throw new Error('Empty file');
 
-    // Delete waiting message
+    // Delete the waiting message
     await bot.deleteMessage(chatId, waitingMsg.message_id).catch(() => {});
 
-    // Send video only (no caption)
-    await response.upload('video', videoPath, {
-      supports_streaming: true
+    // Send video directly using bot.sendVideo (bypasses response.upload)
+    await bot.sendVideo(chatId, videoPath, {
+      supports_streaming: true,
+      reply_to_message_id: messageID // optional: reply to the command message
     });
 
     // Clean up
