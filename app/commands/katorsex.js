@@ -9,17 +9,24 @@ const __dirname = path.dirname(__filename);
 export const meta = {
   name: 'katorsex',
   aliases: ['randvideo'],
-  version: '4.5.0',
+  version: '5.0.0',
   author: 'selov',
-  description: 'Get a random video (video only)',
+  description: 'Get one random video (video only, no text)',
   guide: ['/katorsex'],
   cooldown: 5,
   type: 'anyone',
   category: 'video'
 };
 
-export async function onStart({ response, bot, chatId, messageID }) {
-  const waitingMsg = await response.reply('🔍 Fetching random video...');
+export async function onStart({ bot, chatId, messageID, args, response }) {
+  // 发送处理中提示（使用原生 bot 发送消息，然后获取 message_id 用于后续删除）
+  let statusMsg;
+  try {
+    statusMsg = await bot.sendMessage(chatId, '🔍 Fetching random video...');
+  } catch (e) {
+    // 如果连消息都发不出，直接返回
+    return;
+  }
 
   try {
     const apiUrl = 'https://betadash-api-swordslush-production.up.railway.app/katorsex?page=1';
@@ -28,20 +35,31 @@ export async function onStart({ response, bot, chatId, messageID }) {
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
 
-    // Try multiple possible response keys
+    // 兼容多种返回格式
     const videos = data.results || data.result || data.data || [];
     if (!videos.length) {
-      return response.edit(waitingMsg, '❌ No videos found.');
+      await bot.editMessageText('❌ No videos found.', {
+        chat_id: chatId,
+        message_id: statusMsg.message_id
+      });
+      return;
     }
 
     const video = videos[Math.floor(Math.random() * videos.length)];
     const videoUrl = video.videoUrl || video.url || video.src;
 
     if (!videoUrl) {
-      return response.edit(waitingMsg, '❌ Missing video URL.');
+      await bot.editMessageText('❌ Missing video URL.', {
+        chat_id: chatId,
+        message_id: statusMsg.message_id
+      });
+      return;
     }
 
-    await response.edit(waitingMsg, '📥 Downloading video...');
+    await bot.editMessageText('📥 Downloading video...', {
+      chat_id: chatId,
+      message_id: statusMsg.message_id
+    });
 
     const cacheDir = path.join(__dirname, '..', 'cache', 'katorsex');
     await fs.ensureDir(cacheDir);
@@ -60,23 +78,24 @@ export async function onStart({ response, bot, chatId, messageID }) {
     const stats = await fs.stat(videoPath);
     if (stats.size === 0) throw new Error('Empty file');
 
-    // Delete the waiting message
-    await bot.deleteMessage(chatId, waitingMsg.message_id).catch(() => {});
+    // 删除状态消息
+    await bot.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
 
-    // Send video directly using bot.sendVideo (bypasses response.upload)
+    // 直接发送视频（无 caption）
     await bot.sendVideo(chatId, videoPath, {
       supports_streaming: true,
-      reply_to_message_id: messageID // optional: reply to the command message
+      reply_to_message_id: messageID
     });
 
-    // Clean up
+    // 清理缓存
     setTimeout(() => fs.remove(videoPath).catch(() => {}), 60000);
 
   } catch (err) {
     console.error('Katorsex Error:', err);
     const errorMsg = err.response ? `API status ${err.response.status}` : err.message;
-    await response.edit(waitingMsg, `❌ Error: ${errorMsg}`).catch(() => {
-      response.reply(`❌ Error: ${errorMsg}`);
-    });
+    await bot.editMessageText(`❌ Error: ${errorMsg}`, {
+      chat_id: chatId,
+      message_id: statusMsg.message_id
+    }).catch(() => {});
   }
 }
