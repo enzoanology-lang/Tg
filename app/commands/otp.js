@@ -7,11 +7,11 @@ export const meta = {
   author: 'selov',
   description: 'Generate temporary phone numbers and check OTP inbox',
   guide: [
-    '/otp gen — Generate a temporary phone number',
-    '/otp inbox <phone> — Check OTP messages',
+    ' gen — Generate a temporary phone number',
+    ' inbox <phone> — Check OTP messages',
     'Example:',
-    '/otp gen',
-    '/otp inbox 584161868057'
+    ' gen',
+    ' inbox 584161868057'
   ],
   cooldown: 5,
   type: 'premium',
