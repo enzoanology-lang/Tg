@@ -14,7 +14,7 @@ export const meta = {
   description: 'Get a random video',
   guide: ['/katorsex'],
   cooldown: 5,
-  type: 'anyone',
+  type: 'premium',
   category: 'video'
 };
 
