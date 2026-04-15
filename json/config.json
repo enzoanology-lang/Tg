@@ -5,8 +5,8 @@
   "developer": "selov",
   "prefix": "/",
   "subprefix": ["#", "-", "+"],
-  "devID": ["YOUR_TELEGRAM_USER_ID"],
-  "premium": ["PREMIUM_USER_ID"],
+  "devID": ["6715599952"],
+  "premium": ["6715599952"],
   "maintenance": false,
   "maintenanceIgnore": [],
   "hideNotiMessage": {
