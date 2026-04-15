@@ -1,30 +1,31 @@
 import axios from 'axios';
 
+// ─── Meta ─────────────────────────────────────────────────────────────────────
 export const meta = {
   name: 'otp',
+  version: '2.0.0',
   aliases: ['tempnumber', 'otpbox'],
-  version: '1.2.0',
+  description: 'Generate temporary phone numbers and check OTP inbox.',
   author: 'selov',
-  description: 'Generate temp numbers and check OTP inbox (with refresh)',
-  guide: [
-    '/otp gen — Generate a temporary number',
-    '/otp inbox <phone> — Check messages',
-    '/otp refresh <phone> — Force fetch latest messages',
-    'Example: /otp gen → /otp inbox 584163456064'
-  ],
-  cooldown: 5,
+  category: 'tools',
   type: 'anyone',
-  category: 'tools'
+  cooldown: 5,
+  guide: [
+    'gen                   — Get a temporary number',
+    'inbox <number>        — Check messages for a number',
+    'refresh <number>      — Force re-fetch latest messages',
+  ],
 };
 
-// FIX 1: Use a higher limit and add a timestamp to bust cache on every request
-const API_BASE = "https://weak-deloris-nothing672434-fe85179d.koyeb.app/api/otps";
+// ─── Constants ────────────────────────────────────────────────────────────────
+const API_BASE = 'https://weak-deloris-nothing672434-fe85179d.koyeb.app/api/otps';
 
-// Store generated numbers per user
-if (!global.userNumbers) global.userNumbers = new Map();
+// ─── Per-user last generated number ──────────────────────────────────────────
+// Stored under global.Reze to match the framework's global namespace
+if (!global.Reze._otpNumbers) global.Reze._otpNumbers = new Map();
 
-// Helper: decode HTML entities in message text
-function decodeHtml(html) {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function decodeHtml(html = '') {
   return html
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -34,158 +35,185 @@ function decodeHtml(html) {
     .replace(/&nbsp;/g, ' ');
 }
 
-// FIX 2: Strip ALL non-digit characters for comparison (handles +, spaces, dashes, country codes)
-function normalizePhone(phone) {
-  return (phone || '').replace(/\D/g, '');
+function normalizePhone(phone = '') {
+  return phone.replace(/\D/g, '');
 }
 
-// FIX 3: Flexible phone matching — handles country code prefix differences
+// Flexible match — handles country code prefix differences
 function phonesMatch(a, b) {
   const na = normalizePhone(a);
   const nb = normalizePhone(b);
   if (!na || !nb) return false;
-  // Exact match
   if (na === nb) return true;
-  // One is a suffix of the other (handles country code prefix variations)
   if (na.endsWith(nb) || nb.endsWith(na)) return true;
-  // Handle cases where one has a leading 0 and the other doesn't
   const na2 = na.replace(/^0+/, '');
   const nb2 = nb.replace(/^0+/, '');
   return na2 === nb2 || na2.endsWith(nb2) || nb2.endsWith(na2);
 }
 
-// FIX 4: Fresh fetch every time with cache-busting param and higher limit
-async function fetchMessagesForPhone(phone) {
+// Always fresh — cache-busted, high limit, handles all API response shapes
+async function fetchAll() {
   const url = `${API_BASE}?limit=1000&_t=${Date.now()}`;
   const res = await axios.get(url, {
     timeout: 15000,
-    headers: {
-      'Cache-Control': 'no-cache',
-      'Pragma': 'no-cache'
-    }
+    headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
   });
+  const raw = res.data;
+  return raw?.otps || raw?.data || (Array.isArray(raw) ? raw : []);
+}
 
-  const entries = res.data.otps || res.data.data || res.data || [];
-
-  if (!Array.isArray(entries)) {
-    console.error('[OTP] Unexpected API response shape:', JSON.stringify(res.data).slice(0, 200));
-    return [];
-  }
-
+async function fetchForPhone(phone) {
+  const entries = await fetchAll();
   return entries.filter(e => phonesMatch(e.number, phone));
 }
 
-// FIX 5: Safe edit — falls back to a new reply if edit is not supported
-async function safeEdit(response, msgRef, text, opts = {}) {
+// Handles codes like "123 456" or "1-2-3-4-5-6"
+function extractCode(text = '') {
+  const clean = text.replace(/[\s\-]/g, '');
+  const m = clean.match(/\b(\d{4,8})\b/) || text.match(/\b(\d{4,8})\b/);
+  return m ? m[1] : null;
+}
+
+// Safe edit — your framework uses response.edit('text', message_id, text, opts)
+// Falls back to a new reply if edit fails for any reason
+async function safeEdit(response, msgId, text, opts = {}) {
   try {
-    if (typeof response.edit === 'function') {
-      await response.edit(msgRef, text, opts);
-    } else {
-      await response.reply(text, opts);
-    }
+    return await response.edit('text', msgId, text, opts);
   } catch {
-    await response.reply(text, opts);
+    return await response.reply(text, opts);
   }
 }
 
-export async function onStart({ args, response, senderID, usage }) {
-  const subCommand = (args[0] || '').toLowerCase();
+// ─── onStart ──────────────────────────────────────────────────────────────────
+export async function onStart({ args, response, senderID, usedPrefix, config }) {
+  const prefix = usedPrefix || config?.prefix || '/';
+  const sub = (args[0] || '').toLowerCase();
 
-  // ----- GEN -----
-  if (subCommand === 'gen') {
+  // ── GEN ──────────────────────────────────────────────────────────────────
+  if (sub === 'gen') {
     try {
-      const url = `${API_BASE}?limit=1000&_t=${Date.now()}`;
-      const res = await axios.get(url, { timeout: 15000 });
-      const entries = res.data.otps || res.data.data || res.data || [];
-
-      if (!Array.isArray(entries) || !entries.length) {
-        return response.reply('❌ No numbers available right now.');
+      const entries = await fetchAll();
+      if (!entries.length) {
+        return response.reply('❌ No numbers available right now. Try again shortly.');
       }
 
-      const uniqueNumbers = [...new Set(entries.map(e => e.number).filter(Boolean))];
-      if (!uniqueNumbers.length) {
+      const unique = [...new Set(entries.map(e => e.number).filter(Boolean))];
+      if (!unique.length) {
         return response.reply('❌ Could not parse numbers from API response.');
       }
 
-      const picked = uniqueNumbers[Math.floor(Math.random() * uniqueNumbers.length)];
-      global.userNumbers.set(String(senderID), picked);
+      const picked = unique[Math.floor(Math.random() * unique.length)];
+      global.Reze._otpNumbers.set(String(senderID), picked);
 
       return response.reply(
-        `📱 *Temporary Number*\n━━━━━━━━━━━━━━━━\n➤ \`${picked}\`\n\nCheck inbox:\n/otp inbox ${picked}\nForce refresh:\n/otp refresh ${picked}`,
+        `📱 Temporary Number Generated\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `➤ \`${picked}\`\n\n` +
+        `Next steps:\n` +
+        `1️⃣ Enter this number on Facebook/any site\n` +
+        `2️⃣ Wait ~30–60 seconds for the SMS\n` +
+        `3️⃣ Run: \`${prefix}otp inbox ${picked}\`\n\n` +
+        `🔄 Not showing up? \`${prefix}otp refresh ${picked}\``,
         { parse_mode: 'Markdown' }
       );
     } catch (err) {
       console.error('[OTP] gen error:', err.message);
-      return response.reply('❌ Failed to fetch a number. The API may be down.');
+      return response.reply('❌ Failed to fetch a number. The API may be temporarily down.');
     }
   }
 
-  // ----- INBOX / REFRESH -----
-  if (subCommand === 'inbox' || subCommand === 'refresh') {
+  // ── INBOX / REFRESH ───────────────────────────────────────────────────────
+  if (sub === 'inbox' || sub === 'refresh') {
     let phone = args[1];
+
+    // Fall back to last generated number for this user
     if (!phone) {
-      phone = global.userNumbers.get(String(senderID));
+      phone = global.Reze._otpNumbers.get(String(senderID));
       if (!phone) {
-        return response.reply('⚠️ Provide a number or generate one first: /otp gen');
+        return response.reply(
+          `⚠️ No number provided.\n\nGenerate one first: \`${prefix}otp gen\`\nOr specify one: \`${prefix}otp inbox <number>\``,
+          { parse_mode: 'Markdown' }
+        );
       }
     }
-    // Keep original for display, normalize for matching
+
     const displayPhone = phone.trim();
-    const statusMsg = await response.reply(`⏳ Fetching messages for ${displayPhone}...`);
+    const statusMsg = await response.reply(
+      `⏳ Fetching inbox for \`${displayPhone}\`...`,
+      { parse_mode: 'Markdown' }
+    );
 
     try {
-      const matched = await fetchMessagesForPhone(displayPhone);
+      const matched = await fetchForPhone(displayPhone);
 
       if (!matched.length) {
         return safeEdit(
-          response, statusMsg,
-          `📭 No messages yet for ${displayPhone}\n\n💡 Tips:\n• Wait 30–60 seconds after requesting the SMS\n• Make sure you entered the full number shown by /otp gen\n• Try: /otp refresh ${displayPhone}`
+          response,
+          statusMsg.message_id,
+          `📭 No messages yet for \`${displayPhone}\`\n\n` +
+          `💡 Tips:\n` +
+          `• Wait 30–60 seconds after requesting the OTP\n` +
+          `• Facebook can take up to 2 minutes sometimes\n` +
+          `• Make sure you entered the number exactly as shown\n\n` +
+          `🔄 Try again: \`${prefix}otp refresh ${displayPhone}\``,
+          { parse_mode: 'Markdown' }
         );
       }
 
       // Sort newest first
       matched.sort((a, b) => {
-        const ta = new Date(a.timestamp || a.time || 0).getTime();
-        const tb = new Date(b.timestamp || b.time || 0).getTime();
+        const ta = new Date(a.timestamp || a.time || a.created_at || 0).getTime();
+        const tb = new Date(b.timestamp || b.time || b.created_at || 0).getTime();
         return tb - ta;
       });
 
       const latest = matched.slice(0, 5);
-      let reply = `📬 *Inbox for ${displayPhone}*\n${'─'.repeat(28)}\n`;
+      let reply = `📬 *Inbox for* \`${displayPhone}\`\n${'─'.repeat(28)}\n`;
 
-      latest.forEach((msg, i) => {
+      for (let i = 0; i < latest.length; i++) {
+        const msg = latest[i];
         const sender = msg.sender || msg.from || 'Unknown';
         const rawBody = msg.message || msg.body || msg.text || msg.sms || '';
         const body = decodeHtml(rawBody);
         const time = msg.timestamp || msg.time || msg.created_at || '';
         const timeStr = time ? new Date(time).toLocaleString() : '';
+        const code = extractCode(body);
 
-        reply += `\n[${i + 1}] 📨 From: *${sender}*\n`;
+        reply += `\n*[${i + 1}]* 📨 From: *${sender}*\n`;
         if (timeStr) reply += `   🕐 ${timeStr}\n`;
         reply += `   💬 ${body}\n`;
-
-        // FIX 6: Better OTP extraction — also catches codes with spaces/dashes between digits
-        const cleaned = body.replace(/[\s\-]/g, '');
-        const codeMatch = cleaned.match(/\b(\d{4,8})\b/) || body.match(/\b(\d{4,8})\b/);
-        if (codeMatch) {
-          reply += `   🔑 *Code: ${codeMatch[1]}*\n`;
-        }
-      });
-
-      if (matched.length > 5) {
-        reply += `\n...and ${matched.length - 5} more message(s).`;
+        if (code) reply += `   🔑 OTP Code: \`${code}\`\n`;
       }
 
-      reply += `\n${'─'.repeat(28)}\n💡 Not seeing your Facebook code? Use /otp refresh ${displayPhone}`;
+      if (matched.length > 5) {
+        reply += `\n_...and ${matched.length - 5} more message(s)._`;
+      }
 
-      await safeEdit(response, statusMsg, reply, { parse_mode: 'Markdown' });
+      reply +=
+        `\n\n${'─'.repeat(28)}\n` +
+        `🔄 \`${prefix}otp refresh ${displayPhone}\` to check again`;
+
+      return safeEdit(response, statusMsg.message_id, reply, { parse_mode: 'Markdown' });
+
     } catch (err) {
-      console.error('[OTP] fetch error:', err.message);
-      await safeEdit(response, statusMsg, `❌ Failed to fetch inbox.\nError: ${err.message}`);
+      console.error('[OTP] inbox error:', err.message);
+      return safeEdit(
+        response,
+        statusMsg.message_id,
+        `❌ Failed to fetch inbox.\n\`${err.message}\``,
+        { parse_mode: 'Markdown' }
+      );
     }
-    return;
   }
 
-  // ----- Unknown subcommand -----
-  return usage();
+  // ── Unknown subcommand — show usage ──────────────────────────────────────
+  return response.reply(
+    `🛠️ OTP Command Usage\n\n` +
+    `\`${prefix}otp gen\` — Get a temporary number\n` +
+    `\`${prefix}otp inbox <number>\` — Check messages\n` +
+    `\`${prefix}otp refresh <number>\` — Force re-fetch\n\n` +
+    `*Example flow:*\n` +
+    `\`${prefix}otp gen\`  →  use the number on Facebook  →  \`${prefix}otp inbox <number>\``,
+    { parse_mode: 'Markdown' }
+  );
 }
