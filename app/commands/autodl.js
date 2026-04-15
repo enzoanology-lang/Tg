@@ -60,7 +60,7 @@ export const meta = {
     '• SoundCloud, Pinterest, and more'
   ],
   cooldown: 3,
-  type: 'premium',
+  type: 'anyone',
   category: 'downloader'
 };
 
