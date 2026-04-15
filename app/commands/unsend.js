@@ -1,7 +1,7 @@
 export const meta = {
   name: 'unsend',
   aliases: ['unsent', 'remove', 'rm', 'delete'],
-  version: '1.0.0',
+  version: '1.0.1',
   author: 'selov',
   description: "Remove bot's sent messages",
   guide: ['Reply to a bot message with /unsend'],
@@ -10,35 +10,33 @@ export const meta = {
   category: 'utility'
 };
 
-export async function onStart({ response, bot, chatId, replyMessage, messageID }) {
+export async function onStart({ response, bot, chatId, message, replyMessage, messageID }) {
   try {
-    // Check if user replied to a message
-    if (!replyMessage) {
+    // The framework may provide replyMessage, but fallback to raw message object
+    const repliedMsg = replyMessage || message?.reply_to_message;
+
+    if (!repliedMsg) {
       return response.reply('❌ Please reply to the bot message you want to delete.');
     }
 
-    // Check if the replied message is from the bot itself
+    // Get bot's own ID
     const me = await bot.getMe();
-    if (replyMessage.from.id !== me.id) {
+
+    // Check if the replied message is from the bot
+    if (repliedMsg.from.id !== me.id) {
       return response.reply('❌ I can only delete my own messages.');
     }
 
-    // Attempt to delete the message
+    // Attempt to delete
+    await bot.deleteMessage(chatId, repliedMsg.message_id);
+
+    // Optionally react with a checkmark to confirm
     try {
-      await bot.deleteMessage(chatId, replyMessage.message_id);
-      
-      // React with a checkmark to confirm (optional)
-      try {
-        await bot.setMessageReaction(chatId, messageID, { reaction: [{ type: 'emoji', emoji: '✅' }] });
-      } catch {}
-      
-    } catch (deleteErr) {
-      console.error('Unsend Error:', deleteErr);
-      return response.reply('❌ Failed to delete the message. It might be too old or already deleted.');
-    }
+      await bot.setMessageReaction(chatId, messageID, { reaction: [{ type: 'emoji', emoji: '✅' }] });
+    } catch {}
 
   } catch (err) {
-    console.error('Unsend Command Error:', err);
-    return response.reply(`❌ Error: ${err.message}`);
+    console.error('Unsend Error:', err);
+    return response.reply(`❌ Failed to delete: ${err.message}`);
   }
 }
